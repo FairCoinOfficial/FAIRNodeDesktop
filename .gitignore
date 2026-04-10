@@ -9,6 +9,9 @@ dist
 # compiled tailwind
 packages/ui/src/index.compiled.css
 
+# bundled faircoind binaries (fetched by CI)
+resources/bin/
+
 # code coverage
 coverage
 *.lcov

@@ -1,0 +1,130 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-faircoind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest FairCoin release
+        id: faircoind
+        run: |
+          RELEASE=$(curl -s https://api.github.com/repos/FairCoinOfficial/FairCoin/releases/latest)
+          TAG=$(echo "$RELEASE" | jq -r '.tag_name')
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          mkdir -p bin/linux/x64 bin/mac/arm64 bin/win/x64
+
+          LINUX_URL=$(echo "$RELEASE" | jq -r '.assets[] | select(.name | contains("linux-x86_64")) | .browser_download_url')
+          MAC_URL=$(echo "$RELEASE" | jq -r '.assets[] | select(.name | contains("macos-arm64")) | .browser_download_url')
+          WIN_URL=$(echo "$RELEASE" | jq -r '.assets[] | select(.name | contains("windows-x86_64")) | .browser_download_url')
+
+          echo "Downloading Linux: $LINUX_URL"
+          curl -L -o /tmp/linux.tar.gz "$LINUX_URL"
+          tar -xzf /tmp/linux.tar.gz -C /tmp
+          find /tmp -name faircoind -type f ! -path '*/win/*' | head -1 | xargs -I{} cp {} bin/linux/x64/faircoind
+          chmod +x bin/linux/x64/faircoind
+
+          echo "Downloading macOS: $MAC_URL"
+          curl -L -o /tmp/mac.tar.gz "$MAC_URL"
+          tar -xzf /tmp/mac.tar.gz -C /tmp
+          find /tmp -name faircoind -type f ! -path '*/linux/*' ! -path '*/win/*' | head -1 | xargs -I{} cp {} bin/mac/arm64/faircoind
+          chmod +x bin/mac/arm64/faircoind
+
+          echo "Downloading Windows: $WIN_URL"
+          curl -L -o /tmp/win.zip "$WIN_URL"
+          unzip -q /tmp/win.zip -d /tmp/win
+          find /tmp/win -name faircoind.exe -type f | head -1 | xargs -I{} cp {} bin/win/x64/faircoind.exe
+
+      - name: Upload faircoind binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: faircoind-binaries
+          path: bin/
+
+  build:
+    needs: fetch-faircoind
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Download faircoind binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: faircoind-binaries
+          path: resources/bin/
+
+      - name: Set executable permissions
+        if: matrix.platform != 'win'
+        run: |
+          chmod +x resources/bin/linux/x64/faircoind || true
+          chmod +x resources/bin/mac/arm64/faircoind || true
+
+      - name: Build
+        run: bun run build
+
+      - name: Package
+        run: bun run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fairnode-desktop-${{ matrix.platform }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.dmg
+            dist/*.exe
+            dist/*.zip
+            dist/*.nsis
+            dist/*.yml
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: fairnode-desktop-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts/ -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
