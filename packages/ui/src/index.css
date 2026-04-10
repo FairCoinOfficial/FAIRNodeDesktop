@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #e2e8f0;
+  background-color: #0b1021;
+  font-family: theme("fontFamily.body");
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(120% 120% at 50% 20%, rgba(56, 189, 248, 0.12), transparent),
+    #0b1021;
+}
+
+.glass {
+  background: rgba(17, 24, 51, 0.9);
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.grid-card {
+  @apply glass rounded-xl p-4 md:p-5 border border-slate-700/60;
+}
+
+.section-title {
+  @apply text-slate-200 text-lg font-semibold tracking-tight;
+}
+
+.muted {
+  @apply text-slate-400 text-sm;
+}
+
+.pill {
+  @apply inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium border border-slate-700/60 bg-slate-900/60 text-slate-200;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-0 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.btn-primary {
+  @apply btn bg-gradient-to-r from-accentStrong to-accent text-slate-900 hover:from-accent to-accentStrong;
+}
+
+.btn-ghost {
+  @apply btn border border-slate-700/60 bg-slate-900/40 text-slate-200 hover:bg-slate-800/70;
+}
+
+.field {
+  @apply flex flex-col gap-1 text-sm text-slate-200;
+}
+
+.input {
+  @apply w-full rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-accent focus:outline-none;
+}
+
+.switch {
+  @apply relative inline-flex h-6 w-11 items-center rounded-full border border-slate-600 bg-slate-800 transition-colors;
+}
+
+.switch-thumb {
+  @apply inline-block h-4 w-4 transform rounded-full bg-white transition-transform;
+}

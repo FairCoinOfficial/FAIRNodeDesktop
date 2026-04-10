@@ -1,0 +1,82 @@
+{
+  "name": "fairnode-desktop",
+  "private": true,
+  "type": "module",
+  "main": "packages/electron/dist/main.js",
+  "workspaces": [
+    "packages/common",
+    "packages/ui",
+    "packages/electron"
+  ],
+  "scripts": {
+    "dev": "bunx concurrently --kill-others \"bun run --cwd packages/ui dev\" \"bun run --cwd packages/electron dev\"",
+    "build": "bun run --cwd packages/ui build && bun run --cwd packages/electron build",
+    "lint": "bun run lint:root",
+    "lint:root": "bunx eslint .",
+    "typecheck": "bun run --cwd packages/ui typecheck && bun run --cwd packages/electron typecheck && bun run --cwd packages/common typecheck",
+    "test": "bun test",
+    "dist": "bunx electron-builder"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.12.0",
+    "@typescript-eslint/parser": "^7.12.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.3",
+    "eslint-plugin-react": "^7.34.1",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "eslint-plugin-tailwindcss": "^3.14.2",
+    "prettier": "^3.2.5",
+    "typescript": "^5.4.0"
+  },
+  "build": {
+    "appId": "com.fairnode.desktop",
+    "productName": "FAIRNode Desktop",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "packages/**/dist/**",
+      "resources/**"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin/win",
+        "to": "bin",
+        "filter": "**/*",
+        "platform": ["win32"]
+      },
+      {
+        "from": "resources/bin/mac",
+        "to": "bin",
+        "filter": "**/*",
+        "platform": ["darwin"]
+      },
+      {
+        "from": "resources/bin/linux",
+        "to": "bin",
+        "filter": "**/*",
+        "platform": ["linux"]
+      }
+    ],
+    "asar": true,
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"]
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}

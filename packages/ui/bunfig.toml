@@ -1,0 +1,3 @@
+jsx = "automatic"
+jsxImportSource = "react"
+preload = ["../electron/src/preload.ts"]

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "types": ["bun-types"],
+    "paths": {
+      "@common/*": ["../common/src/*"]
+    }
+  },
+  "include": ["src/**/*", "index.html"],
+  "exclude": ["dist"],
+  "references": [{ "path": "../common" }]
+}
