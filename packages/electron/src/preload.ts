@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { z } from "zod";
-import type { IpcApi, LogReadRequest, LogReadResult, NodeSettings, NodeStatus } from "../../common/src/ipc";
+import type { IpcApi, LogReadRequest, LogReadResult, NodeSettings, NodeStatus } from "../../common/src/ipc.js";
 
 const nodeSettingsSchema = z.object({
   network: z.union([z.literal("mainnet"), z.literal("testnet")]).optional(),
@@ -19,12 +19,12 @@ const api: IpcApi = {
     const status = await ipcRenderer.invoke("node:getStatus");
     return status as NodeStatus;
   },
-  async startNode(settings): Promise<NodeStatus> {
+  async startNode(settings: NodeSettings): Promise<NodeStatus> {
     const parsed = nodeSettingsSchema.parse(settings satisfies NodeSettings);
     const status = await ipcRenderer.invoke("node:start", parsed);
     return status as NodeStatus;
   },
-  async restartNode(settings): Promise<NodeStatus> {
+  async restartNode(settings: NodeSettings): Promise<NodeStatus> {
     const parsed = nodeSettingsSchema.parse(settings satisfies NodeSettings);
     const status = await ipcRenderer.invoke("node:restart", parsed);
     return status as NodeStatus;
@@ -33,7 +33,7 @@ const api: IpcApi = {
     const status = await ipcRenderer.invoke("node:stop");
     return status as NodeStatus;
   },
-  async readLogs(request): Promise<LogReadResult> {
+  async readLogs(request: LogReadRequest): Promise<LogReadResult> {
     const parsed = logReadRequestSchema.parse(request satisfies LogReadRequest);
     const result = await ipcRenderer.invoke("node:readLogs", parsed);
     return result as LogReadResult;

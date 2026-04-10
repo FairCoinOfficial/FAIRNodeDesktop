@@ -1,3 +1,4 @@
-jsx = "automatic"
+jsx = "react-jsx"
 jsxImportSource = "react"
+plugins = ["@tailwindcss/vite"]
 preload = ["../electron/src/preload.ts"]

@@ -1,9 +1,8 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createElectronHandlers } from "./server";
+import { createElectronHandlers } from "./server.js";
 
-const isDev = process.env.NODE_ENV === "development";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function createWindow() {
@@ -18,11 +17,10 @@ async function createWindow() {
     },
   });
 
-  if (isDev) {
-    await win.loadURL("http://localhost:3000");
+  await win.loadFile(path.join(__dirname, "../../ui/dist/index.html"));
+
+  if (process.env.NODE_ENV === "development") {
     win.webContents.openDevTools({ mode: "detach" });
-  } else {
-    await win.loadFile(path.join(__dirname, "../ui/index.html"));
   }
 }
 

@@ -1,13 +1,15 @@
 {
   "name": "fairnode-electron",
   "private": true,
+  "main": "dist/main.js",
   "module": "src/main.ts",
   "type": "module",
   "scripts": {
-    "dev": "bun src/dev.ts",
-    "typecheck": "tsc -b",
+    "dev": "bun run build && NODE_ENV=development electron ./dist/main.js",
+    "start": "electron ./dist/main.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx eslint .",
-    "build": "bun tsc -p tsconfig.json"
+    "build": "bunx esbuild src/main.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/main.js --external:electron --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\" && bunx esbuild src/preload.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/preload.js --external:electron"
   },
   "dependencies": {
     "electron": "30.0.4",

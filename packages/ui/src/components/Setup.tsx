@@ -54,9 +54,9 @@ export function Setup({ initialState, paths, onSubmit, isBusy }: Props) {
   const networkLabel = (network: Network) => (network === "mainnet" ? "Mainnet" : "Testnet");
 
   const renderPath = (label: string, value: string | undefined) => (
-    <div className="rounded-lg bg-slate-900/60 border border-slate-800 px-3 py-2">
-      <div className="text-xs text-slate-500 uppercase tracking-wide">{label}</div>
-      <div className="text-sm text-slate-100 mt-1 break-all">{value ?? "—"}</div>
+    <div className="bg-fair-dark border border-fair-border rounded-xl px-4 py-3">
+      <div className="text-fair-muted text-xs uppercase tracking-wide">{label}</div>
+      <div className="text-white text-sm mt-1 break-all">{value ?? "—"}</div>
     </div>
   );
 
@@ -73,7 +73,11 @@ export function Setup({ initialState, paths, onSubmit, isBusy }: Props) {
                   <button
                     key={value}
                     type="button"
-                    className={`btn ${active ? "btn-primary" : "btn-ghost"} w-full`}
+                    className={`rounded-full font-semibold py-2 px-6 w-full transition-colors ${
+                      active
+                        ? "bg-fair-green text-fair-dark"
+                        : "border border-fair-green bg-transparent text-fair-green"
+                    }`}
                     onClick={() => handleChange("network", value)}
                   >
                     {networkLabel(value)}
@@ -85,7 +89,7 @@ export function Setup({ initialState, paths, onSubmit, isBusy }: Props) {
 
           <Field label="P2P port" hint="Network listening port" error={fieldErrors.p2pPort}>
             <input
-              className="input"
+              className="bg-fair-dark-light border border-fair-border rounded-xl px-4 py-3 text-white placeholder:text-fair-muted focus:border-fair-green focus:outline-none"
               type="number"
               value={form.p2pPort}
               onChange={(e) => handleChange("p2pPort", Number(e.target.value))}
@@ -97,7 +101,7 @@ export function Setup({ initialState, paths, onSubmit, isBusy }: Props) {
 
           <Field label="RPC port" hint="Local control port" error={fieldErrors.rpcPort}>
             <input
-              className="input"
+              className="bg-fair-dark-light border border-fair-border rounded-xl px-4 py-3 text-white placeholder:text-fair-muted focus:border-fair-green focus:outline-none"
               type="number"
               value={form.rpcPort}
               onChange={(e) => handleChange("rpcPort", Number(e.target.value))}
@@ -117,10 +121,16 @@ export function Setup({ initialState, paths, onSubmit, isBusy }: Props) {
         </div>
 
         <div className="flex items-center gap-3">
-          <button type="submit" className="btn-primary px-4" disabled={isBusy}>
+          <button
+            type="submit"
+            className="rounded-full bg-fair-green text-fair-dark font-semibold py-3 px-6 transition-opacity disabled:opacity-50"
+            disabled={isBusy}
+          >
             {isBusy ? "Applying..." : "Start node"}
           </button>
-          <div className="muted">Apply your choices and launch the daemon.</div>
+          <span className="text-fair-muted text-sm">
+            Apply your choices and launch the daemon.
+          </span>
         </div>
 
         {paths && (
@@ -132,8 +142,16 @@ export function Setup({ initialState, paths, onSubmit, isBusy }: Props) {
           </div>
         )}
 
-        {error && <div className="text-rose-300 text-sm">{error}</div>}
-        {success && <div className="text-emerald-300 text-sm">{success}</div>}
+        {error && (
+          <div className="bg-red-900/30 border border-red-600/50 rounded-xl p-4 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+        {success && (
+          <div className="bg-green-900/30 border border-green-600/50 rounded-xl p-4 text-fair-green text-sm">
+            {success}
+          </div>
+        )}
       </form>
     </Card>
   );

@@ -6,7 +6,12 @@ import { Setup } from "./components/Setup";
 import { Settings } from "./components/Settings";
 import { useNodeData } from "./hooks/useNodeData";
 
-const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
+const rootElement = document.getElementById("root");
+if (!rootElement) {
+  throw new Error("Root element not found");
+}
+
+const root = ReactDOM.createRoot(rootElement);
 
 const App = (): JSX.Element => {
   const { status, isHydrating, logText, logSize, start, restart, stop, refreshStatus, readLogs } = useNodeData();
@@ -35,14 +40,18 @@ const App = (): JSX.Element => {
   };
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="min-h-screen bg-fair-dark font-['Inter',system-ui,sans-serif]">
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         <header className="flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">FAIRNode Desktop</p>
-            <h1 className="text-2xl font-semibold">Node control</h1>
+          <div className="flex items-baseline gap-3">
+            <h1 className="text-fair-green text-3xl font-bold">FAIR</h1>
+            <span className="text-fair-green text-xl font-light tracking-widest">
+              Node Desktop
+            </span>
           </div>
-          <div className="text-xs text-slate-400">Log size: {logSize.toLocaleString()} bytes</div>
+          <div className="text-fair-muted text-sm">
+            Log size: {logSize.toLocaleString()} bytes
+          </div>
         </header>
 
         <Setup

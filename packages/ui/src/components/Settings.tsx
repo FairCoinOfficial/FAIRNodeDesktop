@@ -69,22 +69,29 @@ export function Settings({ status, onUpdate }: Props) {
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Network">
             <div className="flex gap-2">
-              {["mainnet", "testnet"].map((network) => (
-                <button
-                  key={network}
-                  type="button"
-                  className={`btn ${merged.network === network ? "btn-primary" : "btn-ghost"} w-full`}
-                  onClick={() => updateField("network", network as NodeSettings["network"])}
-                >
-                  {network}
-                </button>
-              ))}
+              {["mainnet", "testnet"].map((network) => {
+                const active = merged.network === network;
+                return (
+                  <button
+                    key={network}
+                    type="button"
+                    className={`rounded-full font-semibold py-2 px-6 w-full transition-colors ${
+                      active
+                        ? "bg-fair-green text-fair-dark"
+                        : "border border-fair-green bg-transparent text-fair-green"
+                    }`}
+                    onClick={() => updateField("network", network as NodeSettings["network"])}
+                  >
+                    {network}
+                  </button>
+                );
+              })}
             </div>
           </Field>
 
           <Field label="P2P port" error={errors.p2pPort}>
             <input
-              className="input"
+              className="bg-fair-dark-light border border-fair-border rounded-xl px-4 py-3 text-white placeholder:text-fair-muted focus:border-fair-green focus:outline-none"
               type="number"
               value={merged.p2pPort ?? ""}
               onChange={(e) => updateField("p2pPort", Number(e.target.value))}
@@ -96,7 +103,7 @@ export function Settings({ status, onUpdate }: Props) {
 
           <Field label="RPC port" error={errors.rpcPort}>
             <input
-              className="input"
+              className="bg-fair-dark-light border border-fair-border rounded-xl px-4 py-3 text-white placeholder:text-fair-muted focus:border-fair-green focus:outline-none"
               type="number"
               value={merged.rpcPort ?? ""}
               onChange={(e) => updateField("rpcPort", Number(e.target.value))}
@@ -108,7 +115,7 @@ export function Settings({ status, onUpdate }: Props) {
 
           <Field label="RPC user">
             <input
-              className="input"
+              className="bg-fair-dark-light border border-fair-border rounded-xl px-4 py-3 text-white placeholder:text-fair-muted focus:border-fair-green focus:outline-none"
               type="text"
               value={merged.rpcUser ?? ""}
               onChange={(e) => updateField("rpcUser", e.target.value)}
@@ -118,7 +125,7 @@ export function Settings({ status, onUpdate }: Props) {
 
           <Field label="RPC password">
             <input
-              className="input"
+              className="bg-fair-dark-light border border-fair-border rounded-xl px-4 py-3 text-white placeholder:text-fair-muted focus:border-fair-green focus:outline-none"
               type="text"
               value={merged.rpcPassword ?? ""}
               onChange={(e) => updateField("rpcPassword", e.target.value)}
@@ -128,7 +135,7 @@ export function Settings({ status, onUpdate }: Props) {
 
           <Field label="Log level">
             <select
-              className="input"
+              className="bg-fair-dark-light border border-fair-border rounded-xl px-4 py-3 text-white focus:border-fair-green focus:outline-none disabled:opacity-50"
               value={merged.network === "mainnet" ? "info" : "debug"}
               onChange={() => undefined}
               disabled
@@ -139,19 +146,33 @@ export function Settings({ status, onUpdate }: Props) {
                 </option>
               ))}
             </select>
-            <div className="muted">Log level is set via faircoind flags.</div>
+            <span className="text-fair-muted text-sm">Log level is set via faircoind flags.</span>
           </Field>
         </div>
 
         <div className="flex items-center gap-3">
-          <button type="submit" className="btn-primary px-4" disabled={!hasChanges}>
+          <button
+            type="submit"
+            className="rounded-full bg-fair-green text-fair-dark font-semibold py-3 px-6 transition-opacity disabled:opacity-50"
+            disabled={!hasChanges}
+          >
             Save changes
           </button>
-          {!hasChanges && <div className="muted">No pending changes</div>}
+          {!hasChanges && (
+            <span className="text-fair-muted text-sm">No pending changes</span>
+          )}
         </div>
 
-        {message && <div className="text-emerald-300 text-sm">{message}</div>}
-        {error && <div className="text-rose-300 text-sm">{error}</div>}
+        {message && (
+          <div className="bg-green-900/30 border border-green-600/50 rounded-xl p-4 text-fair-green text-sm">
+            {message}
+          </div>
+        )}
+        {error && (
+          <div className="bg-red-900/30 border border-red-600/50 rounded-xl p-4 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
       </form>
     </Card>
   );

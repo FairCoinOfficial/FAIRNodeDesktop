@@ -1,12 +1,15 @@
 import { randomBytes } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { promises as fs, createWriteStream, type WriteStream } from "node:fs";
 import { constants as fsConstants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { App, IpcMain } from "electron";
 import { z } from "zod";
-import type { LogReadRequest, LogReadResult, Network, NodePaths, NodeSettings, NodeStatus } from "../../common/src/ipc";
+import type { LogReadRequest, LogReadResult, Network, NodePaths, NodeSettings, NodeStatus } from "../../common/src/ipc.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const NETWORK_DEFAULTS: Record<Network, { rpcPort: number; p2pPort: number }> = {
   mainnet: { rpcPort: 46373, p2pPort: 46372 },
@@ -39,7 +42,7 @@ async function ensureExecutable(candidatePaths: string[]): Promise<string> {
 }
 
 export class NodeProcessManager {
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: ChildProcess | null = null;
   private logStream: WriteStream | null = null;
   private status: NodeStatus;
 
@@ -196,8 +199,8 @@ export class NodeProcessManager {
     const network = settings.network ?? this.status.network ?? "mainnet";
     const defaults = NETWORK_DEFAULTS[network];
     const existingCredentials = await this.readExistingCredentials();
-    const rpcUser = settings.rpcUser ?? existingCredentials.rpcUser ?? this.status.rpcUser || this.randomCredential();
-    const rpcPassword = settings.rpcPassword ?? existingCredentials.rpcPassword ?? this.status.rpcPassword || this.randomCredential();
+    const rpcUser = settings.rpcUser ?? existingCredentials.rpcUser ?? (this.status.rpcUser || this.randomCredential());
+    const rpcPassword = settings.rpcPassword ?? existingCredentials.rpcPassword ?? (this.status.rpcPassword || this.randomCredential());
     const rpcPort = settings.rpcPort ?? this.status.rpcPort ?? defaults.rpcPort;
     const p2pPort = settings.p2pPort ?? this.status.p2pPort ?? defaults.p2pPort;
 
@@ -377,15 +380,23 @@ export async function createElectronHandlers(app: App): Promise<ElectronHandlers
 }
 
 async function locateFaircoindBinary(): Promise<string> {
-  const resourcesDir = process.resourcesPath;
   const platform = process.platform;
   const arch = process.arch;
-
   const filename = platform === "win32" ? "faircoind.exe" : "faircoind";
-  const candidates = [
-    path.join(resourcesDir, "bin", platform, arch, filename),
-    path.join(resourcesDir, "bin", platform, filename),
-  ];
+
+  const candidates: string[] = [];
+
+  // Production: binaries inside app resources
+  const resourcesDir = process.resourcesPath;
+  candidates.push(path.join(resourcesDir, "bin", platform, arch, filename));
+  candidates.push(path.join(resourcesDir, "bin", platform, filename));
+
+  // Development: binaries in repo root resources/bin
+  if (process.env.NODE_ENV === "development") {
+    const repoRoot = path.resolve(__dirname, "../../..");
+    candidates.push(path.join(repoRoot, "resources", "bin", platform, arch, filename));
+    candidates.push(path.join(repoRoot, "resources", "bin", platform, filename));
+  }
 
   return ensureExecutable(candidates);
 }

@@ -21,4 +21,4 @@ function serve(): Server {
 }
 
 serve();
-await import("./main");
+await import("./main.js");

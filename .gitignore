@@ -6,6 +6,9 @@ out
 dist
 *.tgz
 
+# compiled tailwind
+packages/ui/src/index.compiled.css
+
 # code coverage
 coverage
 *.lcov

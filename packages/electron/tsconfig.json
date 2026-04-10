@@ -1,18 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": false,
     "composite": true,
+    "noEmit": true,
     "outDir": "dist",
     "rootDir": "src",
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "target": "ES2022",
     "lib": ["ES2022"],
     "resolveJsonModule": true,
     "esModuleInterop": true,
-    "types": ["bun-types", "node", "electron"],
-    "noEmit": false
+    "types": ["bun-types", "node", "electron"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["dist", "node_modules"],

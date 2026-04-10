@@ -9,10 +9,13 @@ type Props = {
 
 export function Switch({ checked, onChange, label, disabled }: Props) {
   return (
-    <label className={`flex items-center gap-3 text-sm text-slate-200 ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}>
+    <label
+      className={`inline-flex items-center gap-3 text-sm text-white ${
+        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+      }`}
+    >
       <button
         type="button"
-        className={`switch ${checked ? "bg-accent/80" : "bg-slate-800"}`}
         role="switch"
         aria-checked={checked}
         aria-label={label}
@@ -22,8 +25,17 @@ export function Switch({ checked, onChange, label, disabled }: Props) {
             onChange(!checked);
           }
         }}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors ${
+          checked
+            ? "bg-fair-green-dim border-fair-green-dim"
+            : "bg-fair-dark border-fair-border"
+        }`}
       >
-        <span className={`switch-thumb ${checked ? "translate-x-5" : "translate-x-1"}`} />
+        <span
+          className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+            checked ? "translate-x-5" : "translate-x-1"
+          }`}
+        />
       </button>
       {label && <span>{label}</span>}
     </label>

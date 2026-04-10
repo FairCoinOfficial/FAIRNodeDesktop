@@ -8,14 +8,14 @@ type Props = {
 
 export function Card({ title, actions, children }: Props) {
   return (
-    <section className="grid-card flex flex-col gap-3">
+    <section className="bg-fair-dark-light rounded-xl p-5 flex flex-col gap-4">
       {(title || actions) && (
         <header className="flex items-center justify-between gap-3">
-          {title && <h3 className="section-title">{title}</h3>}
+          {title && <h3 className="text-white text-base font-semibold">{title}</h3>}
           {actions}
         </header>
       )}
-      <div className="text-slate-200 text-sm leading-relaxed">{children}</div>
+      <div className="text-white text-sm leading-relaxed">{children}</div>
     </section>
   );
 }

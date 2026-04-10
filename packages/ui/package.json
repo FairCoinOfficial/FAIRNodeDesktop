@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bun --hot ../electron/src/dev.ts",
-    "build": "bun build ./index.html --outdir dist --minify",
+    "build:css": "bunx tailwindcss -c ../../tailwind.config.cjs -i ./src/index.css -o ./src/index.compiled.css --minify",
+    "build": "bun run build:css && bun build ./index.html --outdir dist --minify",
     "preview": "bun run build && bun ./dist/index.html",
     "typecheck": "tsc -b",
     "lint": "bunx eslint ."
