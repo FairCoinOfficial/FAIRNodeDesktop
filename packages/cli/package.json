@@ -1,0 +1,15 @@
+{
+  "name": "fairnode-cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "fairnode": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts"
+  },
+  "dependencies": {
+    "@opentui/core": "latest"
+  }
+}
