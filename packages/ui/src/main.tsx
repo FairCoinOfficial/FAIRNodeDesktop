@@ -1,10 +1,16 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
-import { Dashboard } from "./components/Dashboard";
-import { Setup } from "./components/Setup";
-import { Settings } from "./components/Settings";
+import { WelcomeScreen } from "./components/WelcomeScreen";
+import { DashboardHeader } from "./components/DashboardHeader";
+import { NodeDashboard } from "./components/dashboards/NodeDashboard";
+import { StakingDashboard } from "./components/dashboards/StakingDashboard";
+import { MasternodeDashboard } from "./components/dashboards/MasternodeDashboard";
 import { useNodeData } from "./hooks/useNodeData";
+import { useRole } from "./hooks/useRole";
+import { useStakingInfo, useMasternodeStatus } from "./hooks/usePolledRpc";
+import { MAINNET_P2P_PORT } from "../../common/src/ipc";
+import type { Network, NodeRole } from "./types";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
@@ -14,76 +20,173 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 
 const App = (): JSX.Element => {
-  const { status, isHydrating, logText, logSize, start, restart, stop, refreshStatus, readLogs } = useNodeData();
+  const { role, isLoading, chooseRole, reopenWelcome, showWelcome } = useRole();
+  const {
+    status,
+    isHydrating,
+    logText,
+    logSize,
+    start,
+    restart,
+    stop,
+    refreshStatus,
+    readLogs,
+    unlockWallet,
+  } = useNodeData();
+  const [network, setNetwork] = React.useState<Network>("mainnet");
+  const [busy, setBusy] = React.useState(false);
 
-  const handleSetup = async (settings: { network: "mainnet" | "testnet"; rpcPort: number; p2pPort: number }) => {
-    await start({
-      network: settings.network,
-      rpcPort: settings.rpcPort,
-      p2pPort: settings.p2pPort,
-    });
-    await refreshStatus();
-    await readLogs(0);
-  };
+  // Only poll role-specific RPC while that role's dashboard is active and running.
+  const running = status?.running ?? false;
+  const stakingPoll = useStakingInfo(!showWelcome && role === "staking" && running);
+  const masternodePoll = useMasternodeStatus(!showWelcome && role === "masternode" && running);
 
-  const handleSaveSettings = async (settings: { network?: "mainnet" | "testnet"; rpcPort?: number; p2pPort?: number; rpcUser?: string; rpcPassword?: string }) => {
-    if (!status) return;
-    await restart({
-      network: settings.network ?? status.network,
-      rpcPort: settings.rpcPort ?? status.rpcPort,
-      p2pPort: settings.p2pPort ?? status.p2pPort,
-      rpcUser: settings.rpcUser ?? status.rpcUser,
-      rpcPassword: settings.rpcPassword ?? status.rpcPassword,
-    });
-    await refreshStatus();
-    await readLogs();
-  };
+  const effectiveNetwork = status?.network ?? network;
+
+  const startWithRole = React.useCallback(
+    async (nextRole: NodeRole) => {
+      setBusy(true);
+      try {
+        await start({ role: nextRole, network: effectiveNetwork });
+        await refreshStatus();
+        await readLogs(0);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [start, refreshStatus, readLogs, effectiveNetwork],
+  );
+
+  const handleStart = React.useCallback(async () => {
+    if (!role) {
+      return;
+    }
+    await startWithRole(role);
+  }, [role, startWithRole]);
+
+  const handleStop = React.useCallback(async () => {
+    setBusy(true);
+    try {
+      await stop();
+    } finally {
+      setBusy(false);
+    }
+  }, [stop]);
+
+  // Welcome confirmation: persist the role and immediately launch the node for it.
+  const handleConfirmRole = React.useCallback(
+    async (chosen: NodeRole) => {
+      await chooseRole(chosen);
+      await startWithRole(chosen);
+    },
+    [chooseRole, startWithRole],
+  );
+
+  const handleUnlock = React.useCallback(
+    async (passphrase: string) => {
+      await unlockWallet({ passphrase, timeout: 0, stakingOnly: true });
+      await stakingPoll.refresh();
+    },
+    [unlockWallet, stakingPoll],
+  );
+
+  const handleApplyMasternodeConfig = React.useCallback(
+    async (config: {
+      alias: string;
+      privKey: string;
+      externalIp: string;
+      txid: string;
+      outputIndex: string;
+    }) => {
+      await window.api.saveMasternodeConf({
+        alias: config.alias,
+        ip: config.externalIp,
+        port: MAINNET_P2P_PORT,
+        privKey: config.privKey,
+        txid: config.txid,
+        outputIndex: config.outputIndex,
+      });
+      setBusy(true);
+      try {
+        await restart({
+          role: "masternode",
+          network: effectiveNetwork,
+          masternode: { privKey: config.privKey, externalIp: config.externalIp },
+        });
+        await refreshStatus();
+        await readLogs(0);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [restart, refreshStatus, readLogs, effectiveNetwork],
+  );
+
+  if (isLoading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-fair-dark font-body">
+        <span className="text-fair-muted">Loading…</span>
+      </main>
+    );
+  }
+
+  if (showWelcome) {
+    return (
+      <WelcomeScreen
+        initialRole={role}
+        network={network}
+        onNetworkChange={setNetwork}
+        onConfirm={handleConfirmRole}
+        onCancel={role ? reopenWelcome : undefined}
+      />
+    );
+  }
+
+  const activeRole = role ?? "node";
 
   return (
-    <main className="min-h-screen bg-fair-dark font-['Inter',system-ui,sans-serif]">
-      <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-        <header className="flex items-center justify-between">
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-fair-green text-3xl font-bold">FAIR</h1>
-            <span className="text-fair-green text-xl font-light tracking-widest">
-              Node Desktop
-            </span>
-          </div>
-          <div className="text-fair-muted text-sm">
-            Log size: {logSize.toLocaleString()} bytes
-          </div>
-        </header>
+    <main className="min-h-screen bg-fair-dark font-body">
+      <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+        <DashboardHeader role={activeRole} logSize={logSize} onChangeRole={reopenWelcome} />
 
-        <Setup
-          initialState={{
-            network: status?.network ?? "mainnet",
-            p2pPort: status?.p2pPort ?? 46372,
-            rpcPort: status?.rpcPort ?? 46373,
-          }}
-          paths={status?.paths ?? null}
-          onSubmit={handleSetup}
-          isBusy={isHydrating}
-        />
-
-        <div className="space-y-4">
-          <Dashboard
+        {activeRole === "node" && (
+          <NodeDashboard
             status={status}
-            logText={logText}
             isHydrating={isHydrating}
-            onStart={async () => {
-              if (!status) return;
-              await start({ network: status.network, rpcPort: status.rpcPort, p2pPort: status.p2pPort });
-              await refreshStatus();
-              await readLogs(0);
-            }}
-            onStop={stop}
+            busy={busy}
+            logText={logText}
+            onStart={handleStart}
+            onStop={handleStop}
           />
+        )}
 
-          <Settings
+        {activeRole === "staking" && (
+          <StakingDashboard
             status={status}
-            onUpdate={handleSaveSettings}
+            isHydrating={isHydrating}
+            busy={busy}
+            logText={logText}
+            staking={stakingPoll.data}
+            stakingLoading={stakingPoll.isInitialLoading}
+            onStart={handleStart}
+            onStop={handleStop}
+            onUnlock={handleUnlock}
           />
-        </div>
+        )}
+
+        {activeRole === "masternode" && (
+          <MasternodeDashboard
+            status={status}
+            isHydrating={isHydrating}
+            busy={busy}
+            logText={logText}
+            masternode={masternodePoll.data}
+            masternodeLoading={masternodePoll.isInitialLoading}
+            onStart={handleStart}
+            onStop={handleStop}
+            onApplyConfig={handleApplyMasternodeConfig}
+          />
+        )}
       </div>
     </main>
   );

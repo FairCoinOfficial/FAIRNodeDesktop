@@ -1,302 +1,346 @@
-import { randomBytes } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
-import { promises as fs, createWriteStream, type WriteStream } from "node:fs";
+import path from "node:path";
+import { promises as fs } from "node:fs";
 import { constants as fsConstants } from "node:fs";
 import os from "node:os";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { App, IpcMain } from "electron";
 import { z } from "zod";
-import type { LogReadRequest, LogReadResult, Network, NodePaths, NodeSettings, NodeStatus } from "../../common/src/ipc.js";
+import { NodeProcessManager } from "../../common/src/node-manager.js";
+import type {
+  LogReadRequest,
+  LogReadResult,
+  MasternodeConfEntry,
+  MasternodeOutput,
+  MasternodeStatusInfo,
+  NodePaths,
+  NodeRole,
+  NodeSettings,
+  NodeStatus,
+  RpcCallRequest,
+  StakingInfo,
+  WalletUnlockRequest,
+} from "../../common/src/ipc.js";
+import {
+  readPersistedRole,
+  writePersistedRole,
+  upsertMasternodeConf,
+} from "../../common/src/role-store.js";
+import { FaircoindRpcClient, RpcError } from "./rpc-client.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const NETWORK_DEFAULTS: Record<Network, { rpcPort: number; p2pPort: number }> = {
-  mainnet: { rpcPort: 46373, p2pPort: 46372 },
-  testnet: { rpcPort: 46375, p2pPort: 46374 },
-};
+const masternodeConfigSchema = z
+  .object({
+    privKey: z.string().min(1),
+    externalIp: z.string().min(1),
+  })
+  .nullable();
 
 const nodeSettingsSchema = z.object({
+  role: z.union([z.literal("node"), z.literal("staking"), z.literal("masternode")]).optional(),
   network: z.union([z.literal("mainnet"), z.literal("testnet")]).optional(),
   rpcPort: z.number().int().positive().optional(),
   p2pPort: z.number().int().positive().optional(),
   rpcUser: z.string().min(1).optional(),
   rpcPassword: z.string().min(1).optional(),
+  masternode: masternodeConfigSchema.optional(),
 });
 
 const logReadRequestSchema = z.object({
   sinceBytes: z.number().int().nonnegative().optional(),
 });
 
-async function ensureExecutable(candidatePaths: string[]): Promise<string> {
-  for (const candidate of candidatePaths) {
-    try {
-      await fs.access(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      continue;
-    }
-  }
+const roleSchema = z.union([z.literal("node"), z.literal("staking"), z.literal("masternode")]);
 
-  throw new Error(`faircoind executable not found in: ${candidatePaths.join(", ")}`);
+const rpcCallSchema = z.object({
+  method: z.string().min(1),
+  params: z.array(z.union([z.string(), z.number(), z.boolean()])).optional(),
+});
+
+const walletUnlockSchema = z.object({
+  passphrase: z.string().min(1),
+  timeout: z.number().int().nonnegative().optional(),
+  stakingOnly: z.boolean().optional(),
+});
+
+const masternodeConfEntrySchema = z.object({
+  alias: z.string().min(1),
+  ip: z.string().min(1),
+  port: z.number().int().positive(),
+  privKey: z.string().min(1),
+  txid: z.string().min(1),
+  outputIndex: z.string().min(1),
+});
+
+type ElectronHandlers = {
+  register: (ipc: IpcMain) => void;
+};
+
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
-export class NodeProcessManager {
-  private child: ChildProcess | null = null;
-  private logStream: WriteStream | null = null;
-  private status: NodeStatus;
-
-  constructor(private readonly paths: NodePaths, private readonly faircoindPath: string) {
-    this.status = {
-      running: false,
-      pid: null,
-      network: "mainnet",
-      rpcPort: NETWORK_DEFAULTS.mainnet.rpcPort,
-      p2pPort: NETWORK_DEFAULTS.mainnet.p2pPort,
-      rpcUser: "",
-      rpcPassword: "",
-      paths,
-    };
+function toBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
   }
+  return undefined;
+}
 
-  getStatus(): NodeStatus {
-    return this.status;
-  }
+export async function createElectronHandlers(app: App): Promise<ElectronHandlers> {
+  const paths = await resolveNodePaths();
+  const faircoindPath = await locateFaircoindBinary();
+  const manager = new NodeProcessManager(paths, faircoindPath);
 
-  async start(settingsInput: NodeSettings): Promise<NodeStatus> {
-    const settings = nodeSettingsSchema.parse(settingsInput satisfies NodeSettings);
-    if (this.child) {
-      await this.stop();
+  const rpcClient = (): FaircoindRpcClient => {
+    const status = manager.getStatus();
+    return new FaircoindRpcClient({
+      host: "127.0.0.1",
+      port: status.rpcPort,
+      user: status.rpcUser,
+      password: status.rpcPassword,
+    });
+  };
+
+  const handleGetStatus = async (): Promise<NodeStatus> => manager.getStatus();
+
+  const handleStart = async (_event: unknown, settingsInput: NodeSettings): Promise<NodeStatus> => {
+    const settings = nodeSettingsSchema.parse(settingsInput);
+    if (settings.role) {
+      await writePersistedRole(paths, settings.role);
     }
+    return manager.start(settings);
+  };
 
-    const resolved = await this.resolveSettings(settings);
-    await this.ensureDirectories();
-    await this.writeConf(resolved);
-    await this.openLogStream();
+  const handleStop = async (): Promise<NodeStatus> => manager.stop();
 
-    const args = this.buildArgs(resolved);
-    const child = spawn(this.faircoindPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-
-    this.child = child;
-    this.status = {
-      running: true,
-      pid: child.pid ?? null,
-      network: resolved.network,
-      rpcPort: resolved.rpcPort,
-      p2pPort: resolved.p2pPort,
-      rpcUser: resolved.rpcUser,
-      rpcPassword: resolved.rpcPassword,
-      startedAt: new Date().toISOString(),
-      exitedAt: undefined,
-      lastError: undefined,
-      paths: this.paths,
-    };
-
-    child.stdout.on("data", (data: Buffer) => this.writeLog(data));
-    child.stderr.on("data", (data: Buffer) => this.writeLog(data));
-
-    child.once("exit", (code, signal) => {
-      this.writeLog(Buffer.from(`faircoind exited with code ${code ?? "unknown"} signal ${signal ?? "unknown"}${os.EOL}`));
-      this.status = {
-        ...this.status,
-        running: false,
-        pid: null,
-        exitedAt: new Date().toISOString(),
-        lastError: code === 0 || code === null ? undefined : `Exited with code ${code} signal ${signal ?? ""}`,
-      };
-      this.closeLogStream();
-      this.child = null;
-    });
-
-    child.once("error", (error) => {
-      this.writeLog(Buffer.from(`faircoind failed: ${error.message}${os.EOL}`));
-      this.status = {
-        ...this.status,
-        running: false,
-        pid: null,
-        lastError: error.message,
-        exitedAt: new Date().toISOString(),
-      };
-      this.closeLogStream();
-      this.child = null;
-    });
-
-    return this.status;
-  }
-
-  async stop(): Promise<NodeStatus> {
-    if (!this.child) {
-      this.status = { ...this.status, running: false, pid: null };
-      return this.status;
+  const handleRestart = async (
+    _event: unknown,
+    settingsInput: NodeSettings,
+  ): Promise<NodeStatus> => {
+    const settings = nodeSettingsSchema.parse(settingsInput);
+    if (settings.role) {
+      await writePersistedRole(paths, settings.role);
     }
+    return manager.start(settings);
+  };
 
-    const childToStop = this.child;
-    return new Promise<NodeStatus>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.writeLog(Buffer.from(`faircoind stop timeout; forcing kill${os.EOL}`));
-        childToStop.kill("SIGKILL");
-      }, 10000);
+  const handleReadLogs = async (
+    _event: unknown,
+    requestInput: LogReadRequest,
+  ): Promise<LogReadResult> => {
+    const request = logReadRequestSchema.parse(requestInput);
+    return manager.readLogs(request);
+  };
 
-      childToStop.once("exit", () => {
-        clearTimeout(timeout);
-        this.status = {
-          ...this.status,
-          running: false,
-          pid: null,
-          exitedAt: new Date().toISOString(),
-        };
-        this.child = null;
-        this.closeLogStream();
-        resolve(this.status);
-      });
+  const handleGetRole = async (): Promise<NodeRole | null> => readPersistedRole(paths);
 
-      childToStop.once("error", (error) => {
-        clearTimeout(timeout);
-        this.status = {
-          ...this.status,
-          running: false,
-          pid: null,
-          lastError: error.message,
-          exitedAt: new Date().toISOString(),
-        };
-        this.child = null;
-        this.closeLogStream();
-        reject(error);
-      });
+  const handleSetRole = async (_event: unknown, roleInput: NodeRole): Promise<NodeRole> => {
+    const role = roleSchema.parse(roleInput);
+    await writePersistedRole(paths, role);
+    return role;
+  };
 
-      childToStop.kill("SIGTERM");
-    });
-  }
-
-  async readLogs(requestInput: LogReadRequest): Promise<LogReadResult> {
-    const request = logReadRequestSchema.parse(requestInput satisfies LogReadRequest);
+  const handleGetStakingInfo = async (): Promise<StakingInfo> => {
+    if (!manager.getStatus().running) {
+      return { rpcReady: false, message: "Node is not running." };
+    }
+    const client = rpcClient();
     try {
-      const stat = await fs.stat(this.paths.logFile);
-      const start = request.sinceBytes && request.sinceBytes < stat.size ? request.sinceBytes : 0;
-      const length = stat.size - start;
+      const info: StakingInfo = { rpcReady: true };
 
-      if (length <= 0) {
-        return { from: stat.size, to: stat.size, content: "" };
+      // getstakinginfo / getstakingstatus naming differs across forks; try both.
+      const stakingStatus = await client
+        .call<Record<string, unknown>>("getstakingstatus")
+        .catch(() => null);
+
+      if (stakingStatus) {
+        info.stakingEnabled = toBoolean(
+          stakingStatus["staking_enabled"] ?? stakingStatus["enabled"],
+        );
+        info.stakingActive =
+          toBoolean(stakingStatus["staking_active"] ?? stakingStatus["staking status"]) ??
+          toBoolean(stakingStatus["mintablecoins"]);
+        info.walletUnlocked = toBoolean(stakingStatus["walletunlocked"]);
       }
 
-      const handle = await fs.open(this.paths.logFile, "r");
-      try {
-        const buffer = Buffer.alloc(Number(length));
-        await handle.read(buffer, 0, Number(length), start);
-        return { from: start, to: stat.size, content: buffer.toString("utf8") };
-      } finally {
-        await handle.close();
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { from: 0, to: 0, content: "" };
-      }
-      throw error;
-    }
-  }
-
-  private async resolveSettings(settings: NodeSettings): Promise<Required<NodeSettings>> {
-    const network = settings.network ?? this.status.network ?? "mainnet";
-    const defaults = NETWORK_DEFAULTS[network];
-    const existingCredentials = await this.readExistingCredentials();
-    const rpcUser = settings.rpcUser ?? existingCredentials.rpcUser ?? (this.status.rpcUser || this.randomCredential());
-    const rpcPassword = settings.rpcPassword ?? existingCredentials.rpcPassword ?? (this.status.rpcPassword || this.randomCredential());
-    const rpcPort = settings.rpcPort ?? this.status.rpcPort ?? defaults.rpcPort;
-    const p2pPort = settings.p2pPort ?? this.status.p2pPort ?? defaults.p2pPort;
-
-    return { network, rpcPort, p2pPort, rpcUser, rpcPassword };
-  }
-
-  private async readExistingCredentials(): Promise<{ rpcUser?: string; rpcPassword?: string }> {
-    try {
-      const content = await fs.readFile(this.paths.confFile, "utf8");
-      const lines = content.split(/\r?\n/);
-      let rpcUser: string | undefined;
-      let rpcPassword: string | undefined;
-      for (const line of lines) {
-        if (line.startsWith("rpcuser=")) {
-          rpcUser = line.replace("rpcuser=", "").trim();
-        }
-        if (line.startsWith("rpcpassword=")) {
-          rpcPassword = line.replace("rpcpassword=", "").trim();
+      const walletInfo = await client
+        .call<Record<string, unknown>>("getwalletinfo")
+        .catch(() => null);
+      if (walletInfo) {
+        info.balance = toNumber(walletInfo["balance"]);
+        const unlockedUntil = toNumber(walletInfo["unlocked_until"]);
+        if (unlockedUntil !== undefined) {
+          info.walletEncrypted = true;
+          info.walletUnlocked = unlockedUntil > 0;
+        } else {
+          info.walletEncrypted = false;
         }
       }
-      return { rpcUser, rpcPassword };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return {};
+
+      if (info.balance === undefined) {
+        info.balance = await client.call<number>("getbalance").catch(() => undefined);
       }
-      throw error;
+
+      const peers = await client.call<number>("getconnectioncount").catch(() => undefined);
+      if (peers !== undefined) {
+        info.connections = peers;
+      }
+
+      info.blocks = await client.call<number>("getblockcount").catch(() => undefined);
+
+      if (info.stakingActive === undefined && info.balance !== undefined) {
+        info.stakingActive = false;
+      }
+
+      return info;
+    } catch (error) {
+      return {
+        rpcReady: false,
+        message: error instanceof RpcError ? error.message : "RPC not ready yet.",
+      };
     }
-  }
+  };
 
-  private randomCredential(): string {
-    return randomBytes(18).toString("base64url");
-  }
-
-  private async writeConf(settings: Required<NodeSettings>): Promise<void> {
-    const lines = [
-      `rpcuser=${settings.rpcUser}`,
-      `rpcpassword=${settings.rpcPassword}`,
-      `rpcport=${settings.rpcPort}`,
-      `port=${settings.p2pPort}`,
-      "server=1",
-      "listen=1",
-      "daemon=0",
-      "rpcallowip=127.0.0.1",
-      "rpcbind=127.0.0.1",
-    ];
-
-    if (settings.network === "testnet") {
-      lines.push("testnet=1");
+  const handleGetMasternodeStatus = async (): Promise<MasternodeStatusInfo> => {
+    if (!manager.getStatus().running) {
+      return { rpcReady: false };
     }
+    const client = rpcClient();
+    try {
+      const info: MasternodeStatusInfo = { rpcReady: true };
 
-    const confContent = `${lines.join(os.EOL)}${os.EOL}`;
-    await fs.mkdir(path.dirname(this.paths.confFile), { recursive: true });
-    await fs.writeFile(this.paths.confFile, confContent, { mode: 0o600 });
-  }
+      const status = await client
+        .call<Record<string, unknown>>("masternode", ["status"])
+        .catch(() => null);
+      if (status) {
+        const code = status["status"];
+        info.statusCode = typeof code === "string" ? code : toNumber(code)?.toString();
+        const message = status["message"];
+        info.statusMessage = typeof message === "string" ? message : undefined;
+      }
 
-  private buildArgs(settings: Required<NodeSettings>): string[] {
-    const args = [
-      `-conf=${this.paths.confFile}`,
-      `-datadir=${this.paths.dataDir}`,
-      "-server=1",
-      "-printtoconsole",
-      "-logtimestamps=1",
-      `-rpcport=${settings.rpcPort}`,
-      `-port=${settings.p2pPort}`,
-    ];
+      info.networkCount = await client.call<number>("masternode", ["count"]).catch(() => undefined);
+      info.balance = await client.call<number>("getbalance").catch(() => undefined);
+      info.connections = await client.call<number>("getconnectioncount").catch(() => undefined);
+      info.blocks = await client.call<number>("getblockcount").catch(() => undefined);
 
-    if (settings.network === "testnet") {
-      args.push("-testnet");
+      return info;
+    } catch {
+      return { rpcReady: false };
     }
+  };
 
-    return args;
-  }
+  const handleGetNewAddress = async (_event: unknown, label?: string): Promise<string> => {
+    const client = rpcClient();
+    return client.call<string>("getnewaddress", label ? [label] : []);
+  };
 
-  private async ensureDirectories(): Promise<void> {
-    await fs.mkdir(this.paths.configDir, { recursive: true });
-    await fs.mkdir(this.paths.dataDir, { recursive: true });
-  }
-
-  private async openLogStream(): Promise<void> {
-    await fs.mkdir(path.dirname(this.paths.logFile), { recursive: true });
-    this.logStream = createWriteStream(this.paths.logFile, { flags: "a" });
-  }
-
-  private closeLogStream(): void {
-    if (this.logStream) {
-      this.logStream.end();
+  const handleGetMasternodeOutputs = async (): Promise<MasternodeOutput[]> => {
+    const client = rpcClient();
+    const raw = await client.call<unknown>("masternode", ["outputs"]);
+    // Older forks return a map { "txid-index": value }; newer return an array.
+    if (Array.isArray(raw)) {
+      return raw
+        .map((item) => {
+          if (typeof item === "object" && item !== null) {
+            const record = item as Record<string, unknown>;
+            const txid = record["txhash"] ?? record["txid"];
+            const index = record["outputidx"] ?? record["outputIndex"] ?? record["vout"];
+            if (typeof txid === "string") {
+              return { txid, outputIndex: toNumber(index)?.toString() ?? "0" };
+            }
+          }
+          return null;
+        })
+        .filter((value): value is MasternodeOutput => value !== null);
     }
-    this.logStream = null;
-  }
-
-  private writeLog(chunk: Buffer): void {
-    if (!this.logStream) {
-      return;
+    if (typeof raw === "object" && raw !== null) {
+      return Object.entries(raw as Record<string, unknown>).map(([key, value]) => {
+        const dash = key.indexOf("-");
+        if (dash > -1) {
+          return { txid: key.slice(0, dash), outputIndex: key.slice(dash + 1) };
+        }
+        return { txid: key, outputIndex: toNumber(value)?.toString() ?? "0" };
+      });
     }
-    this.logStream.write(chunk);
-  }
+    return [];
+  };
+
+  const handleGenerateMasternodeKey = async (): Promise<string> => {
+    const client = rpcClient();
+    return client.call<string>("masternode", ["genkey"]);
+  };
+
+  const handleStartMasternodeAlias = async (
+    _event: unknown,
+    aliasInput: string,
+  ): Promise<string> => {
+    const alias = z.string().min(1).parse(aliasInput);
+    const client = rpcClient();
+    const result = await client.call<unknown>("masternode", ["start-alias", alias]);
+    return JSON.stringify(result);
+  };
+
+  const handleSaveMasternodeConf = async (
+    _event: unknown,
+    entryInput: MasternodeConfEntry,
+  ): Promise<void> => {
+    const entry = masternodeConfEntrySchema.parse(entryInput);
+    await upsertMasternodeConf(paths, entry);
+  };
+
+  const handleUnlockWallet = async (
+    _event: unknown,
+    requestInput: WalletUnlockRequest,
+  ): Promise<void> => {
+    const request = walletUnlockSchema.parse(requestInput);
+    const client = rpcClient();
+    const timeout = request.timeout ?? 0;
+    const params: Array<string | number | boolean> = [request.passphrase, timeout];
+    if (request.stakingOnly) {
+      params.push(true);
+    }
+    await client.call<null>("walletpassphrase", params);
+  };
+
+  const handleRpcCall = async (_event: unknown, requestInput: RpcCallRequest): Promise<unknown> => {
+    const request = rpcCallSchema.parse(requestInput);
+    const client = rpcClient();
+    return client.call<unknown>(request.method, request.params ?? []);
+  };
+
+  return {
+    register(ipc) {
+      ipc.handle("node:getStatus", handleGetStatus);
+      ipc.handle("node:start", handleStart);
+      ipc.handle("node:restart", handleRestart);
+      ipc.handle("node:stop", handleStop);
+      ipc.handle("node:readLogs", handleReadLogs);
+      ipc.handle("node:getRole", handleGetRole);
+      ipc.handle("node:setRole", handleSetRole);
+      ipc.handle("node:getStakingInfo", handleGetStakingInfo);
+      ipc.handle("node:getMasternodeStatus", handleGetMasternodeStatus);
+      ipc.handle("node:getNewAddress", handleGetNewAddress);
+      ipc.handle("node:getMasternodeOutputs", handleGetMasternodeOutputs);
+      ipc.handle("node:generateMasternodeKey", handleGenerateMasternodeKey);
+      ipc.handle("node:startMasternodeAlias", handleStartMasternodeAlias);
+      ipc.handle("node:saveMasternodeConf", handleSaveMasternodeConf);
+      ipc.handle("node:unlockWallet", handleUnlockWallet);
+      ipc.handle("node:rpcCall", handleRpcCall);
+
+      app.on("before-quit", () => {
+        void manager.stop();
+      });
+    },
+  };
 }
 
 export async function resolveNodePaths(): Promise<NodePaths> {
@@ -341,42 +385,9 @@ async function isWritableDirectory(dirPath: string): Promise<boolean> {
     }
     await fs.access(dirPath, fsConstants.W_OK);
     return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
+  } catch {
     return false;
   }
-}
-
-type ElectronHandlers = {
-  register: (ipc: IpcMain) => void;
-};
-
-export async function createElectronHandlers(app: App): Promise<ElectronHandlers> {
-  const paths = await resolveNodePaths();
-  const faircoindPath = await locateFaircoindBinary();
-  const manager = new NodeProcessManager(paths, faircoindPath);
-
-  const handleGetStatus = async (): Promise<NodeStatus> => manager.getStatus();
-  const handleStart = async (_event: unknown, settings: NodeSettings): Promise<NodeStatus> => manager.start(settings);
-  const handleStop = async (): Promise<NodeStatus> => manager.stop();
-  const handleRestart = async (_event: unknown, settings: NodeSettings): Promise<NodeStatus> => manager.start(settings);
-  const handleReadLogs = async (_event: unknown, request: LogReadRequest): Promise<LogReadResult> => manager.readLogs(request);
-
-  return {
-    register(ipc) {
-      ipc.handle("node:getStatus", handleGetStatus);
-      ipc.handle("node:start", handleStart);
-      ipc.handle("node:restart", handleRestart);
-      ipc.handle("node:stop", handleStop);
-      ipc.handle("node:readLogs", handleReadLogs);
-
-      app.on("before-quit", () => {
-        void manager.stop();
-      });
-    },
-  };
 }
 
 async function locateFaircoindBinary(): Promise<string> {
@@ -399,4 +410,17 @@ async function locateFaircoindBinary(): Promise<string> {
   }
 
   return ensureExecutable(candidates);
+}
+
+async function ensureExecutable(candidatePaths: string[]): Promise<string> {
+  for (const candidate of candidatePaths) {
+    try {
+      await fs.access(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error(`faircoind executable not found in: ${candidatePaths.join(", ")}`);
 }

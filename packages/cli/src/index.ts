@@ -17,7 +17,8 @@ import {
   locateFaircoindBinary,
   NETWORK_DEFAULTS,
 } from "../../common/src/node-manager.js";
-import type { NodeStatus, Network } from "../../common/src/ipc.js";
+import { readPersistedRole, writePersistedRole } from "../../common/src/role-store.js";
+import type { NodeStatus, Network, NodeRole } from "../../common/src/ipc.js";
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,26 @@ const args = process.argv.slice(2);
 let currentNetwork: Network = args.includes("--testnet") ? "testnet" : "mainnet";
 const autoStart = args.includes("--start");
 
+function parseRoleArg(argv: string[]): NodeRole | null {
+  if (argv.includes("--masternode")) return "masternode";
+  if (argv.includes("--staking")) return "staking";
+  if (argv.includes("--node")) return "node";
+  const flag = argv.find((value) => value.startsWith("--role="));
+  if (flag) {
+    const value = flag.slice("--role=".length);
+    if (value === "node" || value === "staking" || value === "masternode") {
+      return value;
+    }
+  }
+  return null;
+}
+
+const ROLE_LABEL: Record<NodeRole, string> = {
+  node: "NODE",
+  staking: "STAKING",
+  masternode: "MASTERNODE",
+};
+
 // ── Node Manager ─────────────────────────────────────────────────────────────
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
@@ -51,6 +72,13 @@ if (typeof process.resourcesPath === "string") {
 searchDirs.push(path.join(repoRoot, "resources", "bin"));
 
 const nodePaths = await resolveNodePaths();
+
+// Role: CLI flag wins, otherwise the persisted choice, otherwise plain node.
+const argRole = parseRoleArg(args);
+let currentRole: NodeRole = argRole ?? (await readPersistedRole(nodePaths)) ?? "node";
+if (argRole) {
+  await writePersistedRole(nodePaths, argRole);
+}
 
 let faircoindPath: string;
 try {
@@ -72,6 +100,7 @@ const renderer = await createCliRenderer({ exitOnCtrlC: false });
 // ── Header ───────────────────────────────────────────────────────────────────
 
 const networkBadge = Text({ content: "" });
+const roleBadge = Text({ content: "" });
 const uptimeText = Text({ content: "", fg: C.muted });
 
 const header = Box(
@@ -93,6 +122,7 @@ const header = Box(
   Box(
     { flexDirection: "row", gap: 2, alignItems: "center" },
     uptimeText,
+    roleBadge,
     networkBadge,
   ),
 );
@@ -230,6 +260,7 @@ const footer = Box(
   hotkey("x", "stop"),
   hotkey("r", "restart"),
   hotkey("t", "network"),
+  hotkey("o", "role"),
   hotkey("q", "quit"),
   hotkey("^C", "force quit"),
 );
@@ -298,6 +329,10 @@ function updateUI() {
     ? t`${bold(fg(C.yellow)("[TESTNET]"))}`
     : t`${dim(fg(C.greenDim)("[MAINNET]"))}`;
 
+  // Role badge
+  const role = status.role ?? currentRole;
+  roleBadge.content = t`${bold(fg(C.cyan)(`[${ROLE_LABEL[role]}]`))}`;
+
   // Uptime
   const up = formatUptime(status.startedAt);
   uptimeText.content = up ? t`${dim(fg(C.muted)(`up ${up}`))}` : "";
@@ -343,7 +378,7 @@ renderer.keyInput.on("keypress", (key: KeyEvent) => {
     case "s": {
       if (!status.running) {
         statusLabel.content = t`${dim(fg(C.cyan)("Starting..."))}`;
-        void manager.start({ network: currentNetwork }).then(() => {
+        void manager.start({ role: currentRole, network: currentNetwork }).then(() => {
           refreshStatus();
         });
       }
@@ -364,7 +399,7 @@ renderer.keyInput.on("keypress", (key: KeyEvent) => {
         logOffset = 0;
         logContent = "";
         logText.content = t`${dim(fg(C.muted)("Waiting for logs..."))}`;
-        return manager.start({ network: currentNetwork });
+        return manager.start({ role: currentRole, network: currentNetwork });
       }).then(() => {
         refreshStatus();
       });
@@ -375,6 +410,17 @@ renderer.keyInput.on("keypress", (key: KeyEvent) => {
         currentNetwork = currentNetwork === "mainnet" ? "testnet" : "mainnet";
         const defaults = NETWORK_DEFAULTS[currentNetwork];
         status = { ...status, network: currentNetwork, rpcPort: defaults.rpcPort, p2pPort: defaults.p2pPort };
+        updateUI();
+      }
+      break;
+    }
+    case "o": {
+      if (!status.running) {
+        const order: NodeRole[] = ["node", "staking", "masternode"];
+        const nextIndex = (order.indexOf(currentRole) + 1) % order.length;
+        currentRole = order[nextIndex] ?? "node";
+        status = { ...status, role: currentRole };
+        void writePersistedRole(nodePaths, currentRole);
         updateUI();
       }
       break;
@@ -397,7 +443,7 @@ setInterval(() => {
 
 if (autoStart) {
   statusLabel.content = t`${dim(fg(C.cyan)("Starting..."))}`;
-  void manager.start({ network: currentNetwork }).then(() => {
+  void manager.start({ role: currentRole, network: currentNetwork }).then(() => {
     refreshStatus();
   });
 }
