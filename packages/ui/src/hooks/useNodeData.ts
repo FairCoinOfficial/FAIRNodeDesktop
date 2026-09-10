@@ -1,5 +1,5 @@
 import React from "react";
-import type { NodeSettings, NodeStatus } from "../types";
+import type { NodeSettings, NodeStatus, WalletUnlockRequest } from "../types";
 
 type NodeData = {
   status: NodeStatus | null;
@@ -11,6 +11,7 @@ type NodeData = {
   restart: (settings: NodeSettings) => Promise<void>;
   stop: () => Promise<void>;
   readLogs: (sinceBytes?: number) => Promise<void>;
+  unlockWallet: (request: WalletUnlockRequest) => Promise<void>;
 };
 
 const MAX_LOG_LINES = 400;
@@ -68,25 +69,35 @@ export function useNodeData(): NodeData {
     return () => window.clearInterval(interval);
   }, [refreshStatus, readLogs]);
 
-  const start = React.useCallback(async (settings: NodeSettings) => {
-    logOffsetRef.current = 0;
-    setLogText("");
-    const next = await window.api.startNode(settings);
-    setStatus(next);
-    await readLogs(0);
-  }, [readLogs]);
+  const start = React.useCallback(
+    async (settings: NodeSettings) => {
+      logOffsetRef.current = 0;
+      setLogText("");
+      const next = await window.api.startNode(settings);
+      setStatus(next);
+      await readLogs(0);
+    },
+    [readLogs],
+  );
 
-  const restart = React.useCallback(async (settings: NodeSettings) => {
-    logOffsetRef.current = 0;
-    setLogText("");
-    const next = await window.api.restartNode(settings);
-    setStatus(next);
-    await readLogs(0);
-  }, [readLogs]);
+  const restart = React.useCallback(
+    async (settings: NodeSettings) => {
+      logOffsetRef.current = 0;
+      setLogText("");
+      const next = await window.api.restartNode(settings);
+      setStatus(next);
+      await readLogs(0);
+    },
+    [readLogs],
+  );
 
   const stop = React.useCallback(async () => {
     const next = await window.api.stopNode();
     setStatus(next);
+  }, []);
+
+  const unlockWallet = React.useCallback(async (request: WalletUnlockRequest) => {
+    await window.api.unlockWallet(request);
   }, []);
 
   return {
@@ -99,5 +110,6 @@ export function useNodeData(): NodeData {
     restart,
     stop,
     readLogs,
+    unlockWallet,
   };
 }
